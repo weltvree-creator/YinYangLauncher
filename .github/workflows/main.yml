@@ -21,6 +21,12 @@ jobs:
           gradle-version: '8.9'
       - name: Installeer Android SDK 35
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: yinyang-debug-signing-v1
+      - name: Controleer app-koppelingen
+        run: gradle --no-daemon testDebugUnitTest
       - name: Bouw debug APK
         run: gradle --no-daemon assembleDebug
       - uses: actions/upload-artifact@v4
