@@ -39,7 +39,7 @@ public class MainActivity extends Activity {
  if(Build.VERSION.SDK_INT>=30){root.setOnApplyWindowInsetsListener((v,insets)->{android.graphics.Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());v.setPadding(bars.left,bars.top,bars.right,bars.bottom);return insets;});}
  home=new HomeView(this);root.addView(home,new FrameLayout.LayoutParams(-1,-1));
  toolbar=new LinearLayout(this);toolbar.setTag("home-toolbar");toolbar.setGravity(Gravity.CENTER);toolbar.setPadding(dp(8),dp(8),dp(8),dp(8));toolbar.setBackground(rounded(0xf0142137,22));
- String[] names={"Boven","Midden","Onder","Apps","Instellen"};for(int i=0;i<names.length;i++){final int which=i;TextView t=folderAction(names[i]);toolbar.addView(t,new LinearLayout.LayoutParams(0,-2,1));t.setOnClickListener(v->{toolbar.setVisibility(View.GONE);if(which<3)photoMenu(which==0?0:which==1?2:1);if(which==3)showAllApps();if(which==4)chooseHome();});}
+ String[] names={"Boven","Midden","Onder","Apps","Instellen"};for(int i=0;i<names.length;i++){final int which=i;TextView t=folderAction(names[i]);toolbar.addView(t,new LinearLayout.LayoutParams(0,-2,1));t.setOnClickListener(v->{toolbar.setVisibility(View.GONE);if(which<3)photoMenu(which==0?0:which==1?2:1);if(which==3)showAllApps();if(which==4)wheelSettings();});}
  FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM);lp.setMargins(dp(12),0,dp(12),dp(12));root.addView(toolbar,lp);toolbar.setVisibility(View.GONE);setContentView(root);}
  void toggleToolbar(){toolbar.setVisibility(toolbar.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE);}
  @Override public void onBackPressed(){if(adjusting){adjusting=false;home.invalidate();}else if(toolbar.getVisibility()==View.VISIBLE)toolbar.setVisibility(View.GONE);}
@@ -70,7 +70,11 @@ public class MainActivity extends Activity {
  void chooseHome(){try{startActivity(new Intent(Settings.ACTION_HOME_SETTINGS));}catch(Exception e){new AlertDialog.Builder(this).setMessage("Ga naar Instellingen → Apps → Standaard-apps → Startscherm en kies YinYangLauncher.").setPositiveButton("OK",null).show();}}
  void showAllApps(){String[] labels=new String[installed.size()];for(int i=0;i<labels.length;i++)labels[i]=installed.get(i).loadLabel(getPackageManager()).toString();new AlertDialog.Builder(this).setTitle("Alle apps").setItems(labels,(d,i)->launch(installed.get(i))).setNegativeButton("Sluiten",null).show();}
  void launch(ResolveInfo info){try{Intent i=new Intent(Intent.ACTION_MAIN);i.addCategory(Intent.CATEGORY_LAUNCHER);i.setClassName(info.activityInfo.packageName,info.activityInfo.name);i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);startActivity(i);}catch(Exception e){Toast.makeText(this,"App kan niet openen",Toast.LENGTH_SHORT).show();}}
- String title(int p,int i){return prefs.getString("name_"+p+"_"+i,defaults[i]);}
+ int wheelSlots(){return Math.max(27,prefs.getInt("wheel_slots",27));}
+ int wrapSlot(int id){int size=wheelSlots();return ((id%size)+size)%size;}
+ void openWheelSlot(int id,boolean manage){int slot=wrapSlot(id);page=slot/9;if(manage)slotMenu(slot%9);else slot(slot%9);}
+ void wheelSettings(){new AlertDialog.Builder(this).setTitle("Instellen").setItems(new String[]{"9 approndjes toevoegen","Standaardstartscherm instellen"},(d,n)->{if(n==0){int previous=wheelSlots();prefs.edit().putInt("wheel_slots",previous+9).putFloat("wheel_position",previous).apply();home.wheelPosition=previous;home.invalidate();Toast.makeText(this,"9 nieuwe approndjes toegevoegd",Toast.LENGTH_SHORT).show();}else chooseHome();}).setNegativeButton("Sluiten",null).show();}
+ String title(int p,int i){return prefs.getString("name_"+p+"_"+i,p==0?defaults[i]:"App "+(p*9+i+1));}
  void slot(int i){ArrayList<ResolveInfo> apps=slotApps(page,i);if(apps.size()==1){launch(apps.get(0));return;}if(apps.isEmpty()){editSlot(i);return;}slotMenu(i);}
  GradientDrawable rounded(int color,int radius){GradientDrawable bg=new GradientDrawable();bg.setColor(color);bg.setCornerRadius(dp(radius));return bg;}
  TextView folderText(String text,int size,int color){TextView v=new TextView(this);v.setText(text);v.setTextSize(size);v.setTextColor(color);return v;}
@@ -116,7 +120,8 @@ public class MainActivity extends Activity {
  class HomeView extends View{Paint paint=new Paint(3);HomeView(Context c){super(c);setLayerType(View.LAYER_TYPE_SOFTWARE,null);}void color(int c){paint.setColor(c);paint.setStyle(Paint.Style.FILL);paint.clearShadowLayer();}void text(Canvas c,String s,float x,float y,int size){color(Color.WHITE);paint.setTextSize(dp(size));paint.setTextAlign(Paint.Align.CENTER);paint.setShadowLayer(3,1,2,Color.BLACK);c.drawText(s,x,y,paint);paint.clearShadowLayer();}
  void drawIcon(Canvas c,ResolveInfo app,float x,float y,int size){try{String id=appId(app);Drawable icon=appIcons.get(id);if(icon==null){icon=app.loadIcon(getPackageManager());appIcons.put(id,icon);}int left=Math.round(x-size/2f),top=Math.round(y-size/2f);icon.setBounds(left,top,left+size,top+size);icon.draw(c);}catch(RuntimeException ignored){}}
  void drawSlotIcons(Canvas c,int i,float x,float y){ArrayList<ResolveInfo> apps=slotApps(page,i);if(apps.size()==1){drawIcon(c,apps.get(0),x,y,dp(38));}else if(apps.size()>1){for(int j=0;j<Math.min(4,apps.size());j++)drawIcon(c,apps.get(j),x+(j%2==0?-1:1)*dp(10),y+(j<2?-1:1)*dp(10),dp(18));}}
- float rotation=0,lastAngle; boolean dragging=false; android.animation.ValueAnimator settling;
+ final float wheelStep=(float)(2*Math.PI/9);
+ float wheelPosition=prefs.getFloat("wheel_position",0),gestureStartPosition,lastAngle,lastTouchX,lastTouchY; boolean dragging=false; android.animation.ValueAnimator settling;
  float centerX(){return getWidth()/2f;} float centerY(){return getHeight()/2f;}
  float ringRadius(){return Math.min(getWidth()*.38f,getHeight()*.245f);}
  float centerRadius(){return ringRadius()*.46f;}
@@ -124,36 +129,40 @@ public class MainActivity extends Activity {
  float angleDelta(float a,float b){float d=a-b;while(d>Math.PI)d-=2*Math.PI;while(d<-Math.PI)d+=2*Math.PI;return d;}
  RectF paneBounds(int pane){float top=Math.max(dp(60),centerY()-ringRadius()-dp(56)),bottom=Math.min(getHeight()-dp(60),centerY()+ringRadius()+dp(60));return pane==0?new RectF(0,0,getWidth(),top):pane==1?new RectF(0,bottom,getWidth(),getHeight()):new RectF(0,top,getWidth(),bottom);}
  void photo(Canvas c,int pane,RectF box){paintPhoto(c,pane,box,photoState(pane));if(photos[pane]==null&&pane!=2)text(c,pane==0?"Jouw foto boven":"Jouw foto onder",box.centerX(),box.centerY(),14);}
- void drawRing(Canvas c,int bank,float angle,float alpha){
-  int layer=c.saveLayerAlpha(0,0,getWidth(),getHeight(),Math.round(alpha*255));int previous=page;page=bank;
-  for(int i=0;i<9;i++){double a=-Math.PI/2+2*Math.PI*i/9+angle;float sx=centerX()+(float)Math.cos(a)*ringRadius(),sy=centerY()+(float)Math.sin(a)*ringRadius();float rad=Math.min(dp(25),getWidth()*.067f);
-   color(0xee15253e);paint.setShadowLayer(dp(5),0,0,0xff007aff);c.drawCircle(sx,sy,rad,paint);color(0xaaff9234);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(2));c.drawCircle(sx,sy,rad,paint);paint.setStyle(Paint.Style.FILL);drawSlotIcons(c,i,sx,sy);
-   String label=title(page,i);if(label.length()>13)label=label.substring(0,12)+"…";text(c,label,sx,sy+rad+dp(15),10);
-  }page=previous;c.restoreToCount(layer);
+ int visibleSlot(int place){return wrapSlot((int)Math.floor(wheelPosition)+place);}
+ float fraction(){return wheelPosition-(float)Math.floor(wheelPosition);}
+ void drawWheelSlot(Canvas c,int slot,float angle,float opacity){
+  if(opacity<=0)return;float sx=centerX()+(float)Math.cos(angle)*ringRadius(),sy=centerY()+(float)Math.sin(angle)*ringRadius();float rad=Math.min(dp(25),getWidth()*.067f);
+  int layer=c.saveLayerAlpha(0,0,getWidth(),getHeight(),Math.round(opacity*255));
+  color(0xee15253e);paint.setShadowLayer(dp(5),0,0,0xff007aff);c.drawCircle(sx,sy,rad,paint);color(0xaaff9234);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(2));c.drawCircle(sx,sy,rad,paint);paint.setStyle(Paint.Style.FILL);
+  int previous=page;page=slot/9;drawSlotIcons(c,slot%9,sx,sy);String label=title(page,slot%9);page=previous;
+  if(label.length()>13)label=label.substring(0,12)+"…";text(c,label,sx,sy+rad+dp(15),10);c.restoreToCount(layer);
  }
+ void drawWheel(Canvas c){float part=fraction();for(int i=0;i<=9;i++){float alpha=i==0?1-part:i==9?part:1;drawWheelSlot(c,visibleSlot(i),-(float)Math.PI/2+wheelStep*(i-part),alpha);}}
+ int wheelSlotAt(float x,float y){float part=fraction();int closest=-1;double distance=dp(34);for(int i=0;i<=9;i++){if((i==0&&part>=.5f)||(i==9&&part<.5f))continue;float angle=-(float)Math.PI/2+wheelStep*(i-part);float sx=centerX()+(float)Math.cos(angle)*ringRadius(),sy=centerY()+(float)Math.sin(angle)*ringRadius();double d=Math.hypot(x-sx,y-sy);if(d<distance){closest=visibleSlot(i);distance=d;}}return closest;}
  @Override protected void onDraw(Canvas c){int w=getWidth(),h=getHeight();c.drawColor(0xff101a2b);float cx=centerX(),cy=centerY(),rr=ringRadius(),r=centerRadius();
  float top=Math.max(dp(60),cy-rr-dp(56)),bottom=Math.min(h-dp(60),cy+rr+dp(60));
  photo(c,2,paneBounds(2));if(photos[2]!=null){color(0x44000000);c.drawRect(paneBounds(2),paint);}photo(c,0,paneBounds(0));photo(c,1,paneBounds(1));
  color(0xff305074);c.drawRect(0,top,w,top+dp(1),paint);c.drawRect(0,bottom,w,bottom+dp(1),paint);
  color(0x99007aff);paint.setShadowLayer(dp(12),0,0,0xff007aff);c.drawCircle(cx,cy,r+dp(3),paint);color(0xbb0e2d66);c.drawCircle(cx,cy,r,paint);color(0xccff9c40);c.drawArc(cx-r,cy-r,cx+r,cy+r,-90,180,true,paint);c.drawCircle(cx,cy-r/2,r/2,paint);color(0xcc0e2d66);c.drawCircle(cx,cy+r/2,r/2,paint);c.drawCircle(cx,cy-r/2,r/8,paint);color(0xccff9c40);c.drawCircle(cx,cy+r/2,r/8,paint);
- float blend=Math.min(1,Math.abs(rotation)/(float)(Math.PI/2));drawRing(c,page,rotation,1-blend);if(blend>0)drawRing(c,1-page,rotation-Math.signum(rotation)*(float)(Math.PI/2),blend);
+ drawWheel(c);
 
  }
- void settle(){final float start=rotation;final boolean change=Math.abs(rotation)>.32f;final float end=change?Math.signum(rotation)*(float)(Math.PI/2):0;
- settling=android.animation.ValueAnimator.ofFloat(start,end);settling.setDuration(220);settling.addUpdateListener(a->{rotation=(Float)a.getAnimatedValue();invalidate();});settling.addListener(new android.animation.AnimatorListenerAdapter(){@Override public void onAnimationEnd(android.animation.Animator a){if(change)page=1-page;rotation=0;invalidate();}});settling.start();}
+ void settle(){final float target=Math.round(wheelPosition);
+ settling=android.animation.ValueAnimator.ofFloat(wheelPosition,target);settling.setDuration(180);settling.addUpdateListener(a->{wheelPosition=(Float)a.getAnimatedValue();invalidate();});
+ settling.addListener(new android.animation.AnimatorListenerAdapter(){boolean canceled=false;@Override public void onAnimationCancel(android.animation.Animator a){canceled=true;}@Override public void onAnimationEnd(android.animation.Animator a){if(!canceled){wheelPosition=((target%wheelSlots())+wheelSlots())%wheelSlots();prefs.edit().putFloat("wheel_position",wheelPosition).apply();invalidate();}}});settling.start();}
  @Override public boolean onTouchEvent(MotionEvent e){float x=e.getX(),y=e.getY();int action=e.getActionMasked();
- if(action==MotionEvent.ACTION_DOWN){if(settling!=null&&settling.isRunning())settling.end();downX=x;downY=y;lastAngle=angle(x,y);dragging=false;touchStarted=SystemClock.uptimeMillis();return true;}
+ if(action==MotionEvent.ACTION_DOWN){if(settling!=null&&settling.isRunning())settling.end();downX=x;downY=y;lastTouchX=x;lastTouchY=y;lastAngle=angle(x,y);gestureStartPosition=wheelPosition;dragging=false;touchStarted=SystemClock.uptimeMillis();return true;}
  if(action==MotionEvent.ACTION_MOVE){float dx=x-downX,dy=y-downY;if(adjusting)return true;
   if(Math.hypot(dx,dy)>ViewConfiguration.get(getContext()).getScaledTouchSlop())dragging=true;
-  if(dragging){float current=angle(x,y);if(Math.hypot(downX-centerX(),downY-centerY())>centerRadius()&&Math.hypot(x-centerX(),y-centerY())>centerRadius()*.6f)rotation+=angleDelta(current,lastAngle);else rotation+=(x-downX)/(float)getWidth()*.06f;
-   rotation=Math.max(-(float)Math.PI/2,Math.min((float)Math.PI/2,rotation));toolbar.setVisibility(View.GONE);invalidate();}lastAngle=angle(x,y);return true;}
- if(action==MotionEvent.ACTION_CANCEL){rotation=0;dragging=false;invalidate();return true;}
+  if(dragging){float current=angle(x,y);if(Math.hypot(downX-centerX(),downY-centerY())>centerRadius()&&Math.hypot(x-centerX(),y-centerY())>centerRadius()*.6f)wheelPosition-=angleDelta(current,lastAngle)/wheelStep;else wheelPosition-=((x-lastTouchX)+(y-lastTouchY))/(Math.max(1,ringRadius())*wheelStep);
+   toolbar.setVisibility(View.GONE);invalidate();}lastAngle=angle(x,y);lastTouchX=x;lastTouchY=y;return true;}
+ if(action==MotionEvent.ACTION_CANCEL){wheelPosition=gestureStartPosition;dragging=false;invalidate();return true;}
  if(action==MotionEvent.ACTION_UP){float dx=x-downX,dy=y-downY;
   if(adjusting){if(Math.hypot(x-centerX(),y-centerY())<centerRadius()+dp(8)){adjusting=false;Toast.makeText(MainActivity.this,"Positie opgeslagen",Toast.LENGTH_SHORT).show();}else{prefs.edit().putFloat("x_"+photoPane,prefs.getFloat("x_"+photoPane,0)+dx).putFloat("y_"+photoPane,prefs.getFloat("y_"+photoPane,0)+dy).apply();}invalidate();return true;}
-  if(dragging||Math.hypot(dx,dy)>dp(20)){if(Math.abs(rotation)<.1f&&Math.hypot(dx,dy)>dp(45))rotation=(dx+dy>=0?1:-1)*.4f;settle();return true;}
+  if(dragging||Math.hypot(dx,dy)>dp(20)){if(Math.abs(wheelPosition-gestureStartPosition)<.1f&&Math.hypot(dx,dy)>dp(45))wheelPosition=gestureStartPosition+(dx+dy>=0?-1:1);settle();return true;}
   if(Math.hypot(x-centerX(),y-centerY())<centerRadius()+dp(8)){toggleToolbar();performClick();return true;}
-  toolbar.setVisibility(View.GONE);for(int i=0;i<9;i++){double a=-Math.PI/2+2*Math.PI*i/9;float sx=centerX()+(float)Math.cos(a)*ringRadius(),sy=centerY()+(float)Math.sin(a)*ringRadius();if(Math.hypot(x-sx,y-sy)<dp(34)){if(SystemClock.uptimeMillis()-touchStarted>=ViewConfiguration.getLongPressTimeout())slotMenu(i);else slot(i);performClick();return true;}}
-  return true;
+  toolbar.setVisibility(View.GONE);int hit=wheelSlotAt(x,y);if(hit>=0){openWheelSlot(hit,SystemClock.uptimeMillis()-touchStarted>=ViewConfiguration.getLongPressTimeout());performClick();}return true;
  }return true;}
  @Override public boolean performClick(){super.performClick();return true;}
  }
