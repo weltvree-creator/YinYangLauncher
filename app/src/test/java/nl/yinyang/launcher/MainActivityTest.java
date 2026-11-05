@@ -54,7 +54,10 @@ public class MainActivityTest {
   activity.prefs.edit().putString(activity.key(0,2),activity.appId(camera)+"|"+activity.appId(second)).commit();
   activity.slot(2);assertNull(shadowOf(activity).getNextStartedActivity());
   assertTrue(ShadowAlertDialog.getLatestAlertDialog().isShowing());
-  assertEquals(4,ShadowAlertDialog.getLatestAlertDialog().getListView().getCount());
+  android.app.AlertDialog dialog=ShadowAlertDialog.getLatestAlertDialog();
+  android.view.View tile=dialog.getWindow().getDecorView().findViewWithTag(activity.appId(second));
+  assertNotNull(tile);assertTrue(camera.iconLoads>0);tile.performClick();
+  assertFalse(dialog.isShowing());assertEquals("SecondCamera",shadowOf(activity).getNextStartedActivity().getComponent().getClassName());
  }
  @Test public void savedBindingSurvivesRecreation(){
   saveCamera();controller.recreate();activity=controller.get();
@@ -64,6 +67,6 @@ public class MainActivityTest {
  @Test public void editMenuRemainsAvailableForSingleApp(){
   saveCamera();activity.slotMenu(2);
   assertTrue(ShadowAlertDialog.getLatestAlertDialog().isShowing());
-  assertEquals(3,ShadowAlertDialog.getLatestAlertDialog().getListView().getCount());
+  assertNotNull(ShadowAlertDialog.getLatestAlertDialog().getWindow().getDecorView().findViewWithTag(activity.appId(camera)));
  }
 }
