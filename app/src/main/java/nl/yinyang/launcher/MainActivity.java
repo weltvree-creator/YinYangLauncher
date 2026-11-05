@@ -15,6 +15,7 @@ import java.util.*;
 public class MainActivity extends Activity {
  final String[] defaults={"Telefoon","Berichten","Camera","Internet","Foto's","Muziek","Werk","Tools","Overig"};
  android.content.SharedPreferences prefs; FrameLayout root; HomeView home; int page=0; Bitmap[] photos=new Bitmap[3]; boolean adjusting=false; int photoPane=0; LinearLayout toolbar; float downX,downY;
+ WidgetWorkspace workspace;
  ArrayList<ResolveInfo> installed=new ArrayList<>();
  final HashMap<String,Drawable> appIcons=new HashMap<>(); long touchStarted;
  String appId(ResolveInfo r){return r.activityInfo.packageName+"/"+r.activityInfo.name;}
@@ -22,7 +23,11 @@ public class MainActivity extends Activity {
  @Override protected void onResume(){super.onResume();if(prefs!=null){loadApps();if(home!=null)home.invalidate();}}
  int dp(float n){return (int)(n*getResources().getDisplayMetrics().density+.5f);}
  String key(int p,int i){return "slot_"+p+"_"+i;}
- @Override public void onCreate(Bundle b){super.onCreate(b);getWindow().setStatusBarColor(Color.BLACK);getWindow().setNavigationBarColor(Color.BLACK);prefs=getSharedPreferences("launcher",0);migratePhotos();loadApps();for(int i=0;i<3;i++)loadPhoto(i);showHome();}
+ @Override public void onCreate(Bundle b){super.onCreate(b);getWindow().setStatusBarColor(Color.BLACK);getWindow().setNavigationBarColor(Color.BLACK);prefs=getSharedPreferences("launcher",0);migratePhotos();loadApps();for(int i=0;i<3;i++)loadPhoto(i);showHome();if(b!=null)workspace.showPage(b.getInt("workspace_page",1),false);}
+ @Override protected void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);if(workspace!=null)out.putInt("workspace_page",workspace.current);}
+ @Override protected void onStart(){super.onStart();if(workspace!=null)workspace.start();}
+ @Override protected void onStop(){if(workspace!=null)workspace.stop();super.onStop();}
+ @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);if(workspace!=null)workspace.showPage(1,false);}
  void loadApps(){Intent q=new Intent(Intent.ACTION_MAIN);q.addCategory(Intent.CATEGORY_LAUNCHER);installed.clear();appIcons.clear();HashSet<String> seen=new HashSet<>();for(ResolveInfo r:getPackageManager().queryIntentActivities(q,0))if(!r.activityInfo.packageName.equals(getPackageName())&&seen.add(appId(r)))installed.add(r);Collections.sort(installed,(a,b)->String.CASE_INSENSITIVE_ORDER.compare(a.loadLabel(getPackageManager()).toString(),b.loadLabel(getPackageManager()).toString()));}
  void migratePhotos(){if(!prefs.getBoolean("photo_layout_15",false)){android.content.SharedPreferences.Editor e=prefs.edit();for(int p=0;p<3;p++)e.putBoolean("fit_"+p,true).putFloat("zoom_"+p,1).putFloat("x_"+p,0).putFloat("y_"+p,0);e.putBoolean("photo_layout_15",true).apply();}}
  String paneName(int pane){return pane==0?"Foto boven":pane==1?"Foto onder":"Achtergrond midden";}
@@ -37,16 +42,16 @@ public class MainActivity extends Activity {
  void paintPhoto(Canvas c,int pane,RectF box,PhotoState state){Paint brush=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);brush.setColor(prefs.getInt("color_"+pane,pane==2?0xff101a2b:0xff18243a));c.save();c.clipRect(box);c.drawRect(box,brush);Bitmap b=photos[pane];if(b!=null){RectF dst=photoBounds(b,state,box);c.translate(dst.centerX(),dst.centerY());c.rotate(state.turns*90);float bw=(state.turns%2==0)?dst.width():dst.height(),bh=(state.turns%2==0)?dst.height():dst.width();brush.setColor(Color.WHITE);c.drawBitmap(b,null,new RectF(-bw/2,-bh/2,bw/2,bh/2),brush);}c.restore();}
  void showHome(){root=new FrameLayout(this);
  if(Build.VERSION.SDK_INT>=30){root.setOnApplyWindowInsetsListener((v,insets)->{android.graphics.Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());v.setPadding(bars.left,bars.top,bars.right,bars.bottom);return insets;});}
- home=new HomeView(this);root.addView(home,new FrameLayout.LayoutParams(-1,-1));
+ home=new HomeView(this);workspace=new WidgetWorkspace(this,home);root.addView(workspace,new FrameLayout.LayoutParams(-1,-1));
  toolbar=new LinearLayout(this);toolbar.setTag("home-toolbar");toolbar.setGravity(Gravity.CENTER);toolbar.setPadding(dp(8),dp(8),dp(8),dp(8));toolbar.setBackground(rounded(0xf0142137,22));
  String[] names={"Boven","Midden","Onder","Apps","Instellen"};for(int i=0;i<names.length;i++){final int which=i;TextView t=folderAction(names[i]);toolbar.addView(t,new LinearLayout.LayoutParams(0,-2,1));t.setOnClickListener(v->{toolbar.setVisibility(View.GONE);if(which<3)photoMenu(which==0?0:which==1?2:1);if(which==3)showAllApps();if(which==4)wheelSettings();});}
  FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM);lp.setMargins(dp(12),0,dp(12),dp(12));root.addView(toolbar,lp);toolbar.setVisibility(View.GONE);setContentView(root);}
  void toggleToolbar(){toolbar.setVisibility(toolbar.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE);}
- @Override public void onBackPressed(){if(adjusting){adjusting=false;home.invalidate();}else if(toolbar.getVisibility()==View.VISIBLE)toolbar.setVisibility(View.GONE);}
+ @Override public void onBackPressed(){if(workspace!=null&&workspace.current!=1){workspace.showPage(1,true);}else if(adjusting){adjusting=false;home.invalidate();}else if(toolbar.getVisibility()==View.VISIBLE)toolbar.setVisibility(View.GONE);}
  void photoMenu(int pane){photoPane=pane;new AlertDialog.Builder(this).setTitle(paneName(pane)).setItems(new String[]{"Foto kiezen","Foto aanpassen","Achtergrondkleur","Foto verwijderen"},(d,n)->{photoPane=pane;if(n==0)pickPhoto();if(n==1)adjustPhoto();if(n==2)chooseColor(pane);if(n==3){prefs.edit().remove("photo_"+pane).remove("zoom_"+pane).remove("x_"+pane).remove("y_"+pane).remove("turns_"+pane).apply();photos[pane]=null;home.invalidate();}}).setNegativeButton("Sluiten",null).show();}
  void chooseColor(int pane){String[] names={"Donkerblauw","Zwart","Antraciet","Lichtgrijs","Zand","Groen","Bruin","Wit"};int[] colors={0xff101a2b,0xff000000,0xff30343b,0xffc7ccd1,0xffded1b8,0xff354e42,0xff665044,0xffffffff};new AlertDialog.Builder(this).setTitle("Achtergrondkleur · "+paneName(pane)).setItems(names,(d,n)->{prefs.edit().putInt("color_"+pane,colors[n]).apply();home.invalidate();}).setNegativeButton("Annuleren",null).show();}
  void pickPhoto(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("image/*");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,100+photoPane);}
- @Override protected void onActivityResult(int req,int result,Intent data){super.onActivityResult(req,result,data);if(result==RESULT_OK&&data!=null&&data.getData()!=null&&req>=100&&req<=102){Uri u=data.getData();try{getContentResolver().takePersistableUriPermission(u,Intent.FLAG_GRANT_READ_URI_PERMISSION);}catch(Exception ignored){}int pane=req-100;prefs.edit().putString("photo_"+pane,u.toString()).apply();savePhotoState(pane,new PhotoState());loadPhoto(pane);home.invalidate();photoPane=pane;if(photos[pane]!=null)adjustPhoto();}}
+ @Override protected void onActivityResult(int req,int result,Intent data){super.onActivityResult(req,result,data);if(workspace!=null&&workspace.result(req,result,data))return;if(result==RESULT_OK&&data!=null&&data.getData()!=null&&req>=100&&req<=102){Uri u=data.getData();try{getContentResolver().takePersistableUriPermission(u,Intent.FLAG_GRANT_READ_URI_PERMISSION);}catch(Exception ignored){}int pane=req-100;prefs.edit().putString("photo_"+pane,u.toString()).apply();savePhotoState(pane,new PhotoState());loadPhoto(pane);home.invalidate();photoPane=pane;if(photos[pane]!=null)adjustPhoto();}}
  void adjustPhoto(){final int pane=photoPane;if(photos[pane]==null){pickPhoto();return;}final PhotoState state=photoState(pane);
  Dialog dialog=new Dialog(this,android.R.style.Theme_Material_NoActionBar);LinearLayout panel=new LinearLayout(this);panel.setOrientation(1);panel.setPadding(dp(16),dp(16),dp(16),dp(12));panel.setBackgroundColor(0xff101a2b);
  TextView heading=folderText(paneName(pane)+" aanpassen",22,Color.WHITE);heading.setTypeface(null,Typeface.BOLD);panel.addView(heading);TextView hint=folderText("Sleep om te verplaatsen. Knijp of gebruik de schuif om te zoomen.",13,0xffb8c8dd);hint.setPadding(0,dp(8),0,dp(12));panel.addView(hint);
@@ -167,3 +172,4 @@ public class MainActivity extends Activity {
  @Override public boolean performClick(){super.performClick();return true;}
  }
 }
+
